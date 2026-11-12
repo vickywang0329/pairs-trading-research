@@ -25,7 +25,7 @@ result or backtest performance yet, and this README deliberately quotes no perfo
 
 | Step | Module | What it does | Output |
 |---|---|---|---|
-| 1 | `data_collector.py` | Pulls daily price and volume for 14 semiconductor stocks and 2 benchmark ETFs from the FinMind API | `data/prices_raw.parquet` |
+| 1 | `data_collector.py` | Pulls daily price and volume for 31 semiconductor-chain stocks and 2 benchmark ETFs from the FinMind API | `data/prices_raw.parquet` |
 | 2 | `cointegration.py` | Engle-Granger test on every pair (both directions); keeps p < 0.05 and half-life of 5-60 days | `output/cointegration_candidates.csv` |
 | 2b | `stability_check.py` | Re-estimates hedge ratio and theta on rolling windows and drops pairs whose parameters drift | `output/stability_report.csv` |
 | 3 | `features.py` | Spread, z-score, spread volatility, plus per-leg volume ratio, ATR, and strength relative to the market and the sector | `output/features_dataset.csv` |
@@ -50,10 +50,15 @@ All paths are relative to the project root, so running from the root or from `sr
 
 ## Universe and data window
 
-- 14 stocks: foundry (TSMC, UMC, Vanguard International Semiconductor), IC design (MediaTek,
-  Novatek, Realtek, Alchip Technologies, Faraday Technology), packaging and testing (ASE Technology
-  Holding, Powertech Technology, King Yuan Electronics), memory (Nanya Technology, Winbond
-  Electronics), silicon wafer (GlobalWafers)
+- 31 stocks across the Taiwan semiconductor chain: foundry (TSMC, UMC, Vanguard International
+  Semiconductor, Powerchip), IC design and IP (MediaTek, Novatek, Realtek, Alchip, Faraday, Global
+  Unichip, Silergy, Parade, ASMedia, Phison, eMemory), packaging and testing (ASE, Powertech, King
+  Yuan, Sigurd, Greatek), memory (Nanya, Winbond, Macronix), silicon wafer (GlobalWafers,
+  Sino-American Silicon, Formosa Sumco), IC substrate (Unimicron, Nan Ya PCB, Kinsus), equipment and
+  materials (Grand Process Technology, Gudeng Precision). Full list in `config.py`.
+- The first run on 14 of these stocks found only 1 pair that passed screening, too few to train a
+  model, so I widened the universe. With 31 stocks there are 465 pairs to test, so about 23 would
+  pass at p < 0.05 by chance alone. That's why the stability check and the out-of-sample test matter more than the p-value.
 - Benchmarks: 0050 (market proxy) and 00892 (semiconductor sector proxy). They are only used for
   relative-strength features and never enter a pair.
 - The window is fixed by `END_DATE` in `config.py` (not `date.today()`, so results are reproducible):
