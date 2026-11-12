@@ -49,7 +49,7 @@ def load_all_wide_prices():
     choosing pairs and hedge ratios, and cointegration.py already restricts
     that to the train period."""
     df = pd.read_parquet(RAW_DATA_PATH)
-    df = df[df["close"] > 0]  # zero close = no trade that day (see cointegration.py)
+    df = df[df["close"] > 0]
     df = df.sort_values(["stock_id", "date"])
 
     def to_wide(col):

@@ -21,6 +21,8 @@ Risk rules:
   MAX_GROSS_EXPOSURE_PCT, and at most MAX_POSITIONS pairs at once.
 - After closing a pair it sits out for COOLDOWN_DAYS.
 - Costs: TRANSACTION_COST_PCT per leg on entry and again on exit.
+- Liquidity: each leg is capped at LIQUIDITY_CAP_PCT of that stock's average daily
+  traded value, so the position can't be bigger than the market could absorb.
 
 P&L: spread = ln(A) - hedge_ratio * ln(B). Leg A has notional N, leg B has
 hedge_ratio * N on the other side. z > 0 means the spread is high, so short A and
@@ -70,6 +72,8 @@ from config import (
     MAX_LOSS_PER_TRADE_PCT,
     TRANSACTION_COST_PCT,
     COOLDOWN_DAYS,
+    LIQUIDITY_CAP_PCT,
+    ADV_WINDOW_DAYS,
 )
 
 
@@ -99,22 +103,37 @@ def load_inputs():
     # (and the equity curve) should still advance.
     all_dates = pd.read_parquet(RAW_DATA_PATH, columns=["date"])["date"].unique()
     trading_dates = sorted(d for d in all_dates if d >= split)
-    return pair_tables, preds, [pd.Timestamp(d) for d in trading_dates]
+
+    # Average daily traded value (TWD) per stock, for the liquidity cap. The value
+    # on day d uses volumes up to and including d, so it is known at that day's close.
+    raw = pd.read_parquet(RAW_DATA_PATH)
+    price_col = "close_raw" if "close_raw" in raw.columns else "close"   # traded value uses as-traded price and volume
+    vol_col = "volume_raw" if "volume_raw" in raw.columns else "volume"
+    raw = raw[raw[price_col] > 0]
+    raw["value"] = raw[price_col] * raw[vol_col]
+    value = raw.pivot(index="date", columns="stock_id", values="value").sort_index()
+    adv = value.rolling(ADV_WINDOW_DAYS, min_periods=ADV_WINDOW_DAYS).mean()
+    return pair_tables, preds, [pd.Timestamp(d) for d in trading_dates], adv
 
 
 # ---------------------------------------------------------------------------
 # engine
 # ---------------------------------------------------------------------------
-def run_backtest(pair_tables: dict, preds: pd.DataFrame, trading_dates: list, use_model: bool):
+def run_backtest(pair_tables: dict, preds: pd.DataFrame, trading_dates: list, use_model: bool,
+                 capital: float = INITIAL_CAPITAL, cost_pct: float = TRANSACTION_COST_PCT,
+                 adv: pd.DataFrame | None = None, liq_cap_pct: float | None = None):
     """Day-by-day simulation. With use_model=False the model probability is
-    ignored and every signal is taken (the no-model baseline)."""
+    ignored and every signal is taken (the no-model baseline). capital and
+    cost_pct can be overridden for the sensitivity runs in analysis.py. If adv
+    and liq_cap_pct are given, each leg's notional is capped at that share of
+    the stock's average daily traded value."""
     sig = preds.copy()
     if use_model:
         sig = sig[sig["prob_revert"] >= MODEL_PROB_THRESHOLD]
     # group by signal date so "yesterday's signal, enter today" is a lookup
     sig_by_date = {d: g.sort_values("prob_revert", ascending=False) for d, g in sig.groupby("date")}
 
-    realized_equity = float(INITIAL_CAPITAL)   # cash after realised P&L
+    realized_equity = float(capital)           # cash after realised P&L
     positions = {}                              # pair_id -> open position
     cooldown_until = {}                         # stock pair -> day index it can trade again
     trades, curve = [], []
@@ -140,7 +159,7 @@ def run_backtest(pair_tables: dict, preds: pd.DataFrame, trading_dates: list, us
 
             if reason is not None:
                 gross_pnl = -pos["side"] * pos["notional_a"] * (s_now - pos["entry_spread"])
-                cost = pos["gross"] * TRANSACTION_COST_PCT * 2  # entry + exit
+                cost = pos["gross"] * cost_pct * 2  # entry + exit
                 net = gross_pnl - cost
                 realized_equity += net
                 trades.append({
@@ -148,6 +167,7 @@ def run_backtest(pair_tables: dict, preds: pd.DataFrame, trading_dates: list, us
                     "signal_date": pos["signal_date"], "entry_date": pos["entry_date"], "exit_date": d,
                     "holding_days": held, "exit_reason": reason,
                     "prob_revert": pos["prob"], "notional_gross": round(pos["gross"], 0),
+                    "liq_scale": round(pos["liq_scale"], 4),
                     "gross_pnl": round(gross_pnl, 0), "cost": round(cost, 0), "net_pnl": round(net, 0),
                     "return_on_gross": round(net / pos["gross"], 5),
                 })
@@ -196,6 +216,20 @@ def run_backtest(pair_tables: dict, preds: pd.DataFrame, trading_dates: list, us
                     notional_a = MAX_LOSS_PER_TRADE_PCT * equity_now / stop_dist
                     gross = notional_a * (1.0 + h)
 
+                    # Liquidity cap: neither leg may exceed liq_cap_pct of that stock's
+                    # average daily traded value as of the signal day. No volume data = no trade.
+                    liq_scale = 1.0
+                    if adv is not None and liq_cap_pct:
+                        adv_a = _adv_at(adv, prev_d, row["stock_a"])
+                        adv_b = _adv_at(adv, prev_d, row["stock_b"])
+                        if not (np.isfinite(adv_a) and adv_a > 0 and np.isfinite(adv_b) and adv_b > 0):
+                            continue
+                        limit_a = liq_cap_pct * adv_a / notional_a
+                        limit_b = liq_cap_pct * adv_b / (notional_a * h) if h > 0 else np.inf
+                        liq_scale = min(1.0, limit_a, limit_b)
+                        notional_a *= liq_scale
+                        gross *= liq_scale
+
                     # per-pair and total exposure caps, scale down if over
                     gross_cap = PER_PAIR_CAPITAL_PCT * equity_now
                     open_gross = sum(p["gross"] for p in positions.values())
@@ -213,13 +247,14 @@ def run_backtest(pair_tables: dict, preds: pd.DataFrame, trading_dates: list, us
                         "key": key, "side": side, "entry_idx": i, "entry_date": d, "signal_date": prev_d,
                         "entry_spread": s_entry, "mu0": mu0, "sd0": sd0,
                         "notional_a": notional_a, "gross": gross, "prob": float(row["prob_revert"]),
+                        "liq_scale": liq_scale,
                     }
 
         # ---- 3. mark to market ----
         unreal = _unrealized(positions, pair_tables, d)
         # Costs on open positions are only booked at exit. I deduct them up front
         # here so the drawdown isn't understated.
-        accrued_cost = sum(p["gross"] * TRANSACTION_COST_PCT * 2 for p in positions.values())
+        accrued_cost = sum(p["gross"] * cost_pct * 2 for p in positions.values())
         curve.append({
             "date": d,
             "equity": realized_equity + unreal - accrued_cost,
@@ -233,7 +268,7 @@ def run_backtest(pair_tables: dict, preds: pd.DataFrame, trading_dates: list, us
         for pid, pos in list(positions.items()):
             s_now = pair_tables[pid].at[last_d, "spread"] if last_d in pair_tables[pid].index else pos["entry_spread"]
             gross_pnl = -pos["side"] * pos["notional_a"] * (s_now - pos["entry_spread"])
-            cost = pos["gross"] * TRANSACTION_COST_PCT * 2
+            cost = pos["gross"] * cost_pct * 2
             net = gross_pnl - cost
             realized_equity += net
             trades.append({
@@ -241,11 +276,21 @@ def run_backtest(pair_tables: dict, preds: pd.DataFrame, trading_dates: list, us
                 "signal_date": pos["signal_date"], "entry_date": pos["entry_date"], "exit_date": last_d,
                 "holding_days": len(trading_dates) - 1 - pos["entry_idx"], "exit_reason": "end_of_test",
                 "prob_revert": pos["prob"], "notional_gross": round(pos["gross"], 0),
+                "liq_scale": round(pos["liq_scale"], 4),
                 "gross_pnl": round(gross_pnl, 0), "cost": round(cost, 0), "net_pnl": round(net, 0),
                 "return_on_gross": round(net / pos["gross"], 5),
             })
 
     return pd.DataFrame(trades), pd.DataFrame(curve)
+
+
+def _adv_at(adv: pd.DataFrame, d, stock_id: str) -> float:
+    """Average daily traded value of one stock as of day d, NaN if unknown."""
+    # predictions.csv is read back with the ticker as an integer, the price table has strings
+    stock_id = str(stock_id)
+    if stock_id not in adv.columns or d not in adv.index:
+        return np.nan
+    return float(adv.at[d, stock_id])
 
 
 def _unrealized(positions: dict, pair_tables: dict, d) -> float:
@@ -261,7 +306,7 @@ def _unrealized(positions: dict, pair_tables: dict, d) -> float:
 # ---------------------------------------------------------------------------
 # performance metrics
 # ---------------------------------------------------------------------------
-def compute_metrics(trades: pd.DataFrame, curve: pd.DataFrame) -> dict:
+def compute_metrics(trades: pd.DataFrame, curve: pd.DataFrame, capital: float = INITIAL_CAPITAL) -> dict:
     m = {"n_trades": len(trades)}
     if curve.empty:
         return m
@@ -269,8 +314,8 @@ def compute_metrics(trades: pd.DataFrame, curve: pd.DataFrame) -> dict:
     eq = curve["equity"].to_numpy()
     rets = np.diff(eq) / eq[:-1]
     n_days = len(curve)
-    m["total_return"] = eq[-1] / INITIAL_CAPITAL - 1
-    m["annualized_return"] = (eq[-1] / INITIAL_CAPITAL) ** (252 / max(n_days, 1)) - 1
+    m["total_return"] = eq[-1] / capital - 1
+    m["annualized_return"] = (eq[-1] / capital) ** (252 / max(n_days, 1)) - 1
     m["annualized_vol"] = rets.std(ddof=1) * np.sqrt(252) if len(rets) > 1 else np.nan
     m["sharpe"] = (rets.mean() / rets.std(ddof=1) * np.sqrt(252)
                    if len(rets) > 1 and rets.std(ddof=1) > 0 else np.nan)
@@ -287,6 +332,14 @@ def compute_metrics(trades: pd.DataFrame, curve: pd.DataFrame) -> dict:
         gp, gl = wins["net_pnl"].sum(), -losses["net_pnl"].sum()
         m["profit_factor"] = gp / gl if gl > 0 else np.inf
         m["total_cost"] = trades["cost"].sum()
+        # where the P&L comes from: before costs, and what the costs took
+        m["gross_pnl_pct"] = trades["gross_pnl"].sum() / capital
+        m["cost_pct_of_capital"] = trades["cost"].sum() / capital
+        # traded notional (entry plus exit of both legs) per year, as a multiple of average equity
+        m["annual_turnover"] = trades["notional_gross"].sum() * 2 / curve["equity"].mean() / (n_days / 252)
+        if "liq_scale" in trades.columns:
+            m["share_liq_constrained"] = (trades["liq_scale"] < 0.999).mean()
+            m["avg_liq_scale"] = trades["liq_scale"].mean()
         m["exit_reasons"] = trades["exit_reason"].value_counts().to_dict()
     return m
 
@@ -310,6 +363,9 @@ def build_report(m_model: dict, m_base: dict) -> str:
         ("Avg holding days", "avg_holding_days", "num"),
         ("Avg exposure / equity", "avg_gross_exposure_pct", "pct"),
         ("Total costs (TWD)", "total_cost", "num"),
+        ("P&L before costs", "gross_pnl_pct", "pct"),
+        ("Costs / capital", "cost_pct_of_capital", "pct"),
+        ("Annual turnover (x)", "annual_turnover", "num"),
     ]
     lines = []
     lines.append("=== Backtest report (out-of-sample test period) ===")
@@ -318,6 +374,7 @@ def build_report(m_model: dict, m_base: dict) -> str:
     lines.append(f"Risk: max loss per trade {MAX_LOSS_PER_TRADE_PCT:.0%}, per-pair cap {PER_PAIR_CAPITAL_PCT:.0%}, "
                  f"max {MAX_POSITIONS} positions, total exposure {MAX_GROSS_EXPOSURE_PCT:.0%}, one-way cost {TRANSACTION_COST_PCT:.2%}")
     lines.append(f"Model entry threshold: predicted reversion probability >= {MODEL_PROB_THRESHOLD}")
+    lines.append(f"Liquidity cap: each leg <= {LIQUIDITY_CAP_PCT:.0%} of its {ADV_WINDOW_DAYS}-day average daily traded value")
     lines.append("")
     lines.append(f"{'Metric':<22}{'With model':>14}{'No model':>14}")
     for label, key, kind in rows:
@@ -361,12 +418,14 @@ def plot_equity(curve_model: pd.DataFrame, curve_base: pd.DataFrame, path: str):
 
 
 def main():
-    pair_tables, preds, trading_dates = load_inputs()
+    pair_tables, preds, trading_dates, adv = load_inputs()
     if not trading_dates:
         raise ValueError("No trading days in the test period. Check TRAIN_TEST_SPLIT_DATE and the data range.")
 
-    trades_m, curve_m = run_backtest(pair_tables, preds, trading_dates, use_model=True)
-    trades_b, curve_b = run_backtest(pair_tables, preds, trading_dates, use_model=False)
+    trades_m, curve_m = run_backtest(pair_tables, preds, trading_dates, use_model=True,
+                                     adv=adv, liq_cap_pct=LIQUIDITY_CAP_PCT)
+    trades_b, curve_b = run_backtest(pair_tables, preds, trading_dates, use_model=False,
+                                     adv=adv, liq_cap_pct=LIQUIDITY_CAP_PCT)
 
     report = build_report(compute_metrics(trades_m, curve_m), compute_metrics(trades_b, curve_b))
 
@@ -389,3 +448,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

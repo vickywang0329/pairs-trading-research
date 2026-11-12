@@ -1,0 +1,29 @@
+=== Backtest report (out-of-sample test period) ===
+Initial capital 1,000,000; entry at |z| >= 2.0, revert at 0.5, stop at 4.0, max holding 30 days
+Risk: max loss per trade 2%, per-pair cap 15%, max 5 positions, total exposure 70%, one-way cost 0.40%
+Model entry threshold: predicted reversion probability >= 0.55
+Liquidity cap: each leg <= 5% of its 20-day average daily traded value
+
+Metric                    With model      No model
+Trades                            30            83
+Total return                   -1.8%        -10.2%
+Annualized return              -1.9%        -10.6%
+Annualized vol                  6.0%         11.2%
+Sharpe (rf = 0)                -0.29         -0.95
+Max drawdown                   -9.2%        -15.8%
+Win rate                       56.7%         53.0%
+Profit factor                   0.86          0.75
+Avg holding days                7.40          9.08
+Avg exposure / equity          13.6%         44.7%
+Total costs (TWD)          34,383.00     89,583.00
+P&L before costs                1.6%         -1.3%
+Costs / capital                 3.4%          9.0%
+Annual turnover (x)             9.29         24.82
+
+Exit reasons (with model): {'revert': 16, 'stop': 12, 'end_of_test': 2}
+Exit reasons (no model): {'revert': 41, 'stop': 34, 'timeout': 4, 'end_of_test': 4}
+
+How to read this:
+- The model only adds value if it is clearly better than the no-model baseline. A small gap, or very few trades, is just noise.
+- The test period is about a year with a limited number of trades, so the confidence intervals on Sharpe and win rate are wide. Don't read them as precise.
+- Not modelled: short-selling availability and fees, gaps through the stop, intraday liquidity impact. Live results will usually be worse than this.

@@ -134,7 +134,7 @@ def label_events(df: pd.DataFrame) -> pd.DataFrame:
 
         label = np.full(n, np.nan)
         days = np.full(n, np.nan)
-        end_date = np.full(n, np.datetime64("NaT"), dtype="datetime64[ns]")
+        end_date = np.full(n, np.datetime64("NaT", "ns"), dtype="datetime64[ns]")
 
         for i in range(n):
             if not tradable[i] or not (ENTRY_Z <= abs(z[i]) < STOP_Z):

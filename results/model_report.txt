@@ -1,0 +1,32 @@
+Model: LightGBM
+Number of features: 18
+Rule: enter at |z| >= 2.0; within 30 trading days the spread must get back inside 0.5 (success) before it goes past 4.0 (failure)
+
+Train events: 1025 (reversion rate 45.4%), across 170 pairs
+Out-of-sample labelled events: 228
+Walk-forward CV AUC inside the train set: [0.421, 0.52, 0.457], mean 0.466
+
+=== Out-of-sample performance ===
+Actual reversion rate (base rate): 39.0%
+AUC: 0.513 (0.5 = coin flip)
+Brier score: 0.2550 (baseline from always predicting the mean: 0.2380, lower is better, and the model only adds value if it beats the baseline)
+Events with predicted probability >= 0.55: 49, actual reversion rate 44.9%
+
+Calibration (predicted probability bucket vs actual reversion rate, the closer the better):
+                 n  mean_pred  actual_rate
+bin                                       
+(0.201, 0.322]  46      0.286        0.457
+(0.322, 0.406]  45      0.366        0.311
+(0.406, 0.481]  46      0.443        0.370
+(0.481, 0.557]  45      0.514        0.378
+(0.557, 0.772]  46      0.629        0.435
+
+Permutation importance (AUC drop after shuffling, top 8; near zero or negative = no contribution):
+abs_zscore               0.0420
+atr_pct_b                0.0180
+zscore_chg_5             0.0119
+rs_diff_market           0.0090
+atr_pct_a                0.0088
+rel_strength_market_a    0.0070
+form_half_life           0.0006
+side                    -0.0010

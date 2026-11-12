@@ -1,0 +1,36 @@
+=== Headline (same as backtest_report.txt) ===
+                          With model    No model
+Trades                            30          83
+Total return                   -1.8%      -10.2%
+P&L before costs                1.6%       -1.3%
+Costs / capital                 3.4%        9.0%
+Sharpe (rf = 0)                -0.29       -0.95
+
+=== 1. Random control (300 random subsets of the baseline's signals) ===
+The model keeps 22.0% of signals (probability >= 0.55); each random run keeps the same share.
+Random subsets: 38.7 trades on average, total return mean -8.2%, std 5.7%, 5th-95th percentile -16.8% to 1.0%
+Model total return -1.8%: better than 86.0% of the random subsets
+Model Sharpe -0.29: better than 83.3% of the random subsets
+If the model's rank is not clearly in the top few percent, its edge over the baseline is mostly the effect of trading less, not of picking better trades.
+
+=== 2. Cost sensitivity (one-way cost per leg, charged at entry and exit) ===
+Cost      Model ret  Model Sharpe   Base ret  Base Sharpe
+0.00%          1.7%          0.33      -1.3%        -0.06
+0.10%          0.8%          0.17      -3.6%        -0.29
+0.20%         -0.1%          0.02      -5.8%        -0.51
+0.30%         -0.9%         -0.13      -8.1%        -0.73
+0.40%         -1.8%         -0.29     -10.2%        -0.95
+0.50%         -2.7%         -0.44     -12.3%        -1.16
+Break-even one-way cost, model: about 0.19%
+Baseline loses money even at zero cost
+Retail all-in cost in Taiwan is roughly 0.4% one-way (commission, 0.3% sell-side tax, slippage); institutions pay far less.
+
+=== 3. Capacity (each leg capped at 5% of average daily traded value) ===
+Capital (TWD)     Ret model  Ret base  Trades b  Constrained  Avg size kept
+1,000,000             -1.8%    -10.2%        83         0.0%         100.0%
+10,000,000            -1.8%    -10.2%        83         0.0%         100.0%
+50,000,000            -1.8%    -10.2%        83         4.8%          99.4%
+200,000,000           -2.1%    -10.5%        83        24.1%          88.9%
+1,000,000,000         -0.2%     -8.8%        83        69.9%          57.9%
+A level with 0 trades means the liquidity cap shrank every position below the 0.5%-of-equity minimum size, i.e. the strategy can't be run at that size.
+'Constrained' is the share of baseline trades cut down by the liquidity cap; 'Avg size kept' is the average fraction of the intended size that was allowed. Market impact is not modelled.

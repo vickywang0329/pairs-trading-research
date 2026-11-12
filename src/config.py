@@ -160,11 +160,33 @@ MAX_LOSS_PER_TRADE_PCT = 0.02        # loss I accept if a trade hits the stop, a
 TRANSACTION_COST_PCT = 0.004         # rough one-way cost per leg: commission + tax + slippage, charged on entry and exit
 COOLDOWN_DAYS = 5                    # wait this long after closing a pair before re-entering it
 
+LIQUIDITY_CAP_PCT = 0.05             # a leg's notional may not exceed this share of that stock's average daily traded value
+ADV_WINDOW_DAYS = 20                 # window for average daily traded value (TWD), known as of the signal day
+
 TRADES_PATH = str(BASE_DIR / "output/trades.csv")
 EQUITY_CURVE_PATH = str(BASE_DIR / "output/equity_curve.csv")
 BACKTEST_REPORT_PATH = str(BASE_DIR / "output/backtest_report.txt")
 
 # data and intermediate outputs
+# ---------------------------------------------------------------------------
+# 10. Extra analysis (analysis.py)
+# ---------------------------------------------------------------------------
+COST_SENSITIVITY_PCTS = [0.0, 0.001, 0.002, 0.003, 0.004, 0.005]    # one-way cost per leg to try
+CAPACITY_LEVELS = [1_000_000, 10_000_000, 50_000_000, 200_000_000, 1_000_000_000]   # starting capital in TWD
+RANDOM_CONTROL_RUNS = 300            # how many random signal subsets to draw
+ANALYSIS_REPORT_PATH = str(BASE_DIR / "output/analysis_report.txt")
+ANALYSIS_PLOT_PATH = str(BASE_DIR / "output/analysis_plots.png")
+
 RAW_DATA_PATH = str(BASE_DIR / "data/prices_raw.parquet")
 COINTEGRATION_RESULT_PATH = str(BASE_DIR / "output/cointegration_candidates.csv")
 STABILITY_RESULT_PATH = str(BASE_DIR / "output/stability_report.csv")
+
+# Stock splits. FinMind's dividend table doesn't cover them, so they are listed by hand.
+# Each entry is (first trading day at the new price, price factor). A 1-for-4 split is
+# 0.25: prices before that day are multiplied by it, volume before that day is divided by it.
+# Found by the 30% one-day-move check in data_collector.py and confirmed against the raw
+# close and volume around the date.
+KNOWN_SPLITS = {
+    "0050": [("2025-06-18", 0.25)],   # raw close 188.65 -> 47.57, volume about 8x
+    "6415": [("2022-07-13", 0.25)],   # raw close 2485 -> 560, volume about 5x
+}

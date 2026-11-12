@@ -35,8 +35,6 @@ def load_log_prices() -> pd.DataFrame:
     I cut at the split date so pair selection never sees the test year.
     Benchmark ETFs are dropped here since they're only used in features.py."""
     df = pd.read_parquet(RAW_DATA_PATH)
-    # FinMind can return close = 0 on days with no trade (halts). log(0) = -inf
-    # breaks the regressions, so I treat those days as missing and forward-fill.
     df = df[df["close"] > 0]
     df = df[df["date"] < pd.Timestamp(TRAIN_TEST_SPLIT_DATE)]
     df = df[df["stock_id"].isin(STOCK_UNIVERSE.keys())]
