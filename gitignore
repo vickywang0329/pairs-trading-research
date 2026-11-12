@@ -1,0 +1,12 @@
+# Raw price data and all generated outputs stay out of version control (the code regenerates them)
+data/
+output/
+
+# Secrets and environments
+.env
+*.env
+
+# Python
+__pycache__/
+*.pyc
+.venv/
