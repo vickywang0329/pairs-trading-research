@@ -13,24 +13,34 @@ test and compares the two approaches on realized performance.
 
 ## Status
 
-All of Phase 1 (Engle-Granger MVP) is written: data collection -> cointegration test ->
-stability check -> feature engineering -> model -> risk rules and backtest.
+Phase 1 is written end to end. Here is where it stands on real data:
 
-**I have not run the full pipeline on real data yet.** My development environment had no outside
-network access, so every module was checked on synthetic data only (logic and invariants: no
-same-day fills, exposure caps, cooldown, P&L reconciliation). There is no real pair list, model
-result or backtest performance yet, and this README deliberately quotes no performance numbers.
+- **Static pair list (`cointegration.py` + `stability_check.py`): run on real data, negative result.**
+  On 3 years of training data and 14 stocks, 1 pair passed screening. On 31 stocks and 7 years, 4 of 435
+  pairs passed the Engle-Granger test (about 22 would be expected by chance alone) and none passed the
+  stability check. The pair that looked fine on 3 years (Winbond / Nanya) did not survive the longer
+  window. So one fixed pair list held for years is not supported by the data.
+- **Walk-forward selection (`walkforward.py`): written in response, not yet run on real data.**
+  It reselects pairs every quarter on the trailing year. The pipeline from there (model, backtest) was
+  checked on synthetic data only: no same-day fills, entries only inside a pair's selection period, no
+  duplicate trades on one stock pair, exposure caps, and a leak test (changing prices after a date
+  leaves every earlier feature row byte-identical).
+
+There are no model or backtest results on real data yet, so this README quotes no performance numbers.
 
 ## Pipeline
 
 | Step | Module | What it does | Output |
 |---|---|---|---|
 | 1 | `data_collector.py` | Pulls daily price and volume for 31 semiconductor-chain stocks and 2 benchmark ETFs from the FinMind API | `data/prices_raw.parquet` |
-| 2 | `cointegration.py` | Engle-Granger test on every pair (both directions); keeps p < 0.05 and half-life of 5-60 days | `output/cointegration_candidates.csv` |
-| 2b | `stability_check.py` | Re-estimates hedge ratio and theta on rolling windows and drops pairs whose parameters drift | `output/stability_report.csv` |
-| 3 | `features.py` | Spread, z-score, spread volatility, plus per-leg volume ratio, ATR, and strength relative to the market and the sector | `output/features_dataset.csv` |
-| 4 | `model.py` | Defines the reversion label, trains the boosted trees with a time-based split, reports out-of-sample metrics and predicted probabilities | `output/predictions.csv`, `model_report.txt` |
-| 5-6 | `backtest.py` | Risk rules plus a day-by-day simulation, with-model vs no-model baseline | `output/trades.csv`, `equity_curve.csv`, `backtest_report.txt`, `equity_curve.png` |
+| 2 | `walkforward.py` | Every quarter, runs Engle-Granger on the previous year for every pair, keeps the best few with a positive hedge ratio, and builds daily features for the period they are traded: spread, z-score, spread volatility, per-leg volume ratio, ATR, strength relative to the market and the sector | `output/features_dataset.csv`, `walkforward_pairs.csv` |
+| 3 | `model.py` | Defines the reversion label, trains the boosted trees with a time-based split, reports out-of-sample metrics and predicted probabilities | `output/predictions.csv`, `model_report.txt` |
+| 4 | `backtest.py` | Risk rules plus a day-by-day simulation, with-model vs no-model baseline | `output/trades.csv`, `equity_curve.csv`, `backtest_report.txt`, `equity_curve.png` |
+
+The static-pair experiment that motivated `walkforward.py` is kept as its own path:
+`cointegration.py` (one Engle-Granger screen over the whole train period), `stability_check.py`
+(rolling re-estimation of hedge ratio and theta) and `features.py` (features for the pairs that
+survive). `walkforward.py` reuses their functions.
 
 ## Usage
 
@@ -39,11 +49,13 @@ pip install -r requirements.txt
 export FINMIND_API_TOKEN="your_token"      # Windows PowerShell: $env:FINMIND_API_TOKEN="your_token"
 
 python src/data_collector.py
-python src/cointegration.py
-python src/stability_check.py
-python src/features.py
+python src/walkforward.py
 python src/model.py
 python src/backtest.py
+
+# the static-pair experiment, optional:
+python src/cointegration.py
+python src/stability_check.py
 ```
 
 All paths are relative to the project root, so running from the root or from `src/` gives the same result.
@@ -62,12 +74,24 @@ All paths are relative to the project root, so running from the root or from `sr
 - Benchmarks: 0050 (market proxy) and 00892 (semiconductor sector proxy). They are only used for
   relative-strength features and never enter a pair.
 - The window is fixed by `END_DATE` in `config.py` (not `date.today()`, so results are reproducible):
-  4 years of daily bars, the first 3 for training and the last 1 held out as the out-of-sample test period
+  8 years of daily bars, the first 7 for training and the last 1 held out as the out-of-sample test period.
+  I started with 4 years, but 3 years of training data only produced one stable pair, so I lengthened it.
 
 ## Methodology notes
 
+**Walk-forward pair selection**
+Cointegration between two stocks is a statement about a stretch of history, and for these stocks it
+doesn't last. So every `REBALANCE_EVERY_DAYS` (63) I screen all pairs on the previous
+`FORMATION_WINDOW_DAYS` (252), keep pairs with a positive hedge ratio (a negative one means the
+"spread" is two stocks moving opposite ways, which isn't a pairs trade), take the
+`MAX_PAIRS_PER_PERIOD` (10) most significant, and trade them with the hedge ratio fixed from that
+window until the next reselection. Formation uses only dates before the first trading day.
+The p-value cap matters: with 435 pairs, about 5% pass by luck in every period, so the screen alone
+proves nothing. What I check is whether the selected pairs then revert out of sample, and
+`walkforward.py` prints how often a pair selected in one quarter is selected again in the next.
+
 **Avoiding look-ahead bias (where pairs trading plus machine learning most often goes wrong)**
-- Cointegration screening and hedge-ratio estimation use the train period only. The last year is locked away as out-of-sample.
+- Pair selection and hedge ratios only use data from before each trading period, and the last year is locked away as out-of-sample for the model. I tested this by changing prices after a date and checking that every earlier feature row stays identical.
 - A label looks 30 days past the entry, so any training sample whose label window crosses the split date is dropped (purging).
 - Inside the train set I also run walk-forward cross-validation. Hyperparameters are fixed and conservative; I never tune them on the test period.
 - The backtest fills at the next day's close after the signal, not the close of the signal day.
@@ -108,7 +132,7 @@ honest conclusion is that the model adds nothing.
 - Fills are at the close, with no intraday liquidity or market impact. The cost rate is a rough estimate.
 - The test period is about a year with a limited number of trades, so the confidence intervals on Sharpe and win rate are wide. Only the broad direction and robustness mean anything.
 - When a pair signals on many consecutive days, neighbouring labels are highly correlated, so the effective sample size is far smaller than the row count.
-- The pair list and hedge ratios are fixed from the train period. A live setup would need periodic re-estimation (a scheduled job could handle that).
+- Reselecting pairs each quarter means the same two stocks can come back in consecutive periods. The backtest treats them as one pair, so it never holds the same trade twice, but it doesn't model how correlated the open positions are with each other.
 
 ## Phase 2 (not started)
 
@@ -127,9 +151,10 @@ taiwan-pairs-trading/
 └── src/
     ├── config.py           # universe, dates, test thresholds, feature/label/model/risk parameters
     ├── data_collector.py   # FinMind daily price and volume (incl. high/low and benchmark indices)
-    ├── cointegration.py    # pairwise Engle-Granger test + half-life filter
-    ├── stability_check.py  # rolling-window check of hedge ratio / theta stability
-    ├── features.py         # feature engineering
+    ├── walkforward.py      # quarterly pair reselection + feature engineering (main flow)
+    ├── cointegration.py    # pairwise Engle-Granger test + half-life filter (static-pair experiment, reused by walkforward)
+    ├── stability_check.py  # rolling-window check of hedge ratio / theta stability (static-pair experiment)
+    ├── features.py         # feature functions (reused by walkforward) and the static-pair feature build
     ├── model.py            # labels, gradient-boosted trees, out-of-sample evaluation
     └── backtest.py         # risk rules and simulated-trade backtest
 ```
