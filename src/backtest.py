@@ -52,6 +52,7 @@ import pandas as pd
 
 from config import (
     FEATURE_DATASET_PATH,
+    RAW_DATA_PATH,
     PREDICTIONS_PATH,
     TRADES_PATH,
     EQUITY_CURVE_PATH,
@@ -93,7 +94,11 @@ def load_inputs():
         for pid, g in feats.groupby("pair_id")
     }
     split = pd.Timestamp(TRAIN_TEST_SPLIT_DATE)
-    trading_dates = sorted(d for d in feats["date"].unique() if d >= split)
+    # Trading days come from the price file, not the feature file: in a quarter
+    # where no pair was selected the feature file has no rows, but the calendar
+    # (and the equity curve) should still advance.
+    all_dates = pd.read_parquet(RAW_DATA_PATH, columns=["date"])["date"].unique()
+    trading_dates = sorted(d for d in all_dates if d >= split)
     return pair_tables, preds, [pd.Timestamp(d) for d in trading_dates]
 
 
@@ -111,7 +116,7 @@ def run_backtest(pair_tables: dict, preds: pd.DataFrame, trading_dates: list, us
 
     realized_equity = float(INITIAL_CAPITAL)   # cash after realised P&L
     positions = {}                              # pair_id -> open position
-    cooldown_until = {}                         # pair_id -> day index it can trade again
+    cooldown_until = {}                         # stock pair -> day index it can trade again
     trades, curve = [], []
 
     for i, d in enumerate(trading_dates):
@@ -146,7 +151,7 @@ def run_backtest(pair_tables: dict, preds: pd.DataFrame, trading_dates: list, us
                     "gross_pnl": round(gross_pnl, 0), "cost": round(cost, 0), "net_pnl": round(net, 0),
                     "return_on_gross": round(net / pos["gross"], 5),
                 })
-                cooldown_until[pid] = i + COOLDOWN_DAYS
+                cooldown_until[pos["key"]] = i + COOLDOWN_DAYS
                 del positions[pid]
 
         # ---- 2. entries: yesterday's signals, filled today ----
@@ -156,7 +161,12 @@ def run_backtest(pair_tables: dict, preds: pd.DataFrame, trading_dates: list, us
             if candidates is not None:
                 for _, row in candidates.iterrows():
                     pid = row["pair_id"]
-                    if pid in positions or i < cooldown_until.get(pid, -1):
+                    # With rolling reselection the same two stocks can show up under
+                    # different pair_ids in consecutive periods. Treat them as one pair
+                    # so I never hold the same trade twice.
+                    key = frozenset((row["stock_a"], row["stock_b"]))
+                    if (pid in positions or i < cooldown_until.get(key, -1)
+                            or any(p["key"] == key for p in positions.values())):
                         continue
                     if len(positions) >= MAX_POSITIONS:
                         break
@@ -200,7 +210,7 @@ def run_backtest(pair_tables: dict, preds: pd.DataFrame, trading_dates: list, us
                         continue  # too small to bother with (and fees would eat it)
 
                     positions[pid] = {
-                        "side": side, "entry_idx": i, "entry_date": d, "signal_date": prev_d,
+                        "key": key, "side": side, "entry_idx": i, "entry_date": d, "signal_date": prev_d,
                         "entry_spread": s_entry, "mu0": mu0, "sd0": sd0,
                         "notional_a": notional_a, "gross": gross, "prob": float(row["prob_revert"]),
                     }

@@ -60,14 +60,18 @@ STOCK_UNIVERSE = {
 
 # ---------------------------------------------------------------------------
 # 2. Data window
-# 4 years of daily bars. The last year is the out-of-sample test period;
-# pair selection, features and model training only ever use the first 3.
+# 8 years of daily bars. The last year is the out-of-sample test period;
+# pair selection, features and model training only ever use the first 7.
+# I went from 4 to 8 years because 3 years of training data gave too little
+# statistical power: only one pair survived screening and the model had too
+# few events. The cost is that the window now includes 2020-2022, so I watch
+# for structural breaks in the stability check.
 # ---------------------------------------------------------------------------
 # END_DATE is hardcoded on purpose. With date.today() the window and the
 # train/test split shift every time I run it, so results can't be reproduced
 # or compared between runs. I bump it by hand when I want fresh data.
 END_DATE = date(2026, 11, 12)
-START_DATE = END_DATE - timedelta(days=365 * 4)
+START_DATE = END_DATE - timedelta(days=365 * 8)
 
 TRAIN_TEST_SPLIT_DATE = END_DATE - timedelta(days=365)  # last year = test period
 
@@ -78,6 +82,19 @@ COINTEGRATION_SIGNIFICANCE = 0.05   # keep a pair only if p-value is below this
 MIN_OBSERVATIONS = 500              # skip pairs with fewer trading days than this
 MIN_HALF_LIFE_DAYS = 5               # shorter than this is usually noise
 MAX_HALF_LIFE_DAYS = 60              # from my 3-6 month holding tolerance and the 2-3x half-life rule of thumb
+
+# ---------------------------------------------------------------------------
+# 3b. Walk-forward pair selection (walkforward.py)
+# Fixing one pair list over 7 years found nothing stable, so the main flow now
+# reselects pairs on a schedule. Every REBALANCE_EVERY_DAYS I rerun the
+# Engle-Granger screen on the previous FORMATION_WINDOW_DAYS and trade the
+# survivors until the next reselection, using only data from before that day.
+# ---------------------------------------------------------------------------
+FORMATION_WINDOW_DAYS = 252         # lookback used to pick pairs, about 1 year
+REBALANCE_EVERY_DAYS = 63           # reselect this often, about 1 quarter
+MAX_PAIRS_PER_PERIOD = 10           # keep only the most significant pairs per period. Even with no real
+                                    # cointegration about 5% of pairs pass by luck, so I cap the list.
+WALKFORWARD_PAIRS_PATH = str(BASE_DIR / "output/walkforward_pairs.csv")
 
 # ---------------------------------------------------------------------------
 # 4. Stability check

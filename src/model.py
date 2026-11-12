@@ -96,6 +96,8 @@ def add_model_features(df: pd.DataFrame) -> pd.DataFrame:
 def get_feature_columns(df: pd.DataFrame) -> list:
     """Columns that go into the model: pair-level, both legs, and the aligned extras."""
     pair_level = ["abs_zscore", "side", "zscore_chg_5", "spread_vol"]
+    # how strongly the pair passed screening when it was selected (walkforward.py only)
+    pair_level += [c for c in ("form_p_value", "form_half_life") if c in df.columns]
     leg_level = [c for c in df.columns if c.endswith("_a") or c.endswith("_b")]
     # stock_a / stock_b are ticker strings, not features
     leg_level = [c for c in leg_level if c not in ("stock_a", "stock_b")]
@@ -126,13 +128,16 @@ def label_events(df: pd.DataFrame) -> pd.DataFrame:
         sd = g["spread_std"].to_numpy()
         dates = g["date"].to_numpy()
         n = len(g)
+        # Rows past the end of a pair's selection period exist only so labels can
+        # see the outcome. I can't enter on them, so they're never events.
+        tradable = g["tradable"].to_numpy() if "tradable" in g.columns else np.ones(n, dtype=bool)
 
         label = np.full(n, np.nan)
         days = np.full(n, np.nan)
         end_date = np.full(n, np.datetime64("NaT"), dtype="datetime64[ns]")
 
         for i in range(n):
-            if not (ENTRY_Z <= abs(z[i]) < STOP_Z):
+            if not tradable[i] or not (ENTRY_Z <= abs(z[i]) < STOP_Z):
                 continue
             if i + H > n - 1:
                 continue  # label window not finished, leave NaN
@@ -165,6 +170,8 @@ def label_events(df: pd.DataFrame) -> pd.DataFrame:
 
     out = pd.concat(frames, ignore_index=True)
     is_event = (out["zscore"].abs() >= ENTRY_Z) & (out["zscore"].abs() < STOP_Z)
+    if "tradable" in out.columns:
+        is_event &= out["tradable"].astype(bool)
     return out[is_event].reset_index(drop=True)
 
 

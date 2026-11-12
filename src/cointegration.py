@@ -42,7 +42,17 @@ def load_log_prices() -> pd.DataFrame:
     df = df[df["stock_id"].isin(STOCK_UNIVERSE.keys())]
 
     wide = df.pivot(index="date", columns="stock_id", values="close")
-    wide = wide.sort_index().ffill().dropna(how="any")  # align trading days, drop gaps
+    wide = wide.sort_index()
+
+    # A stock that listed late would force dropna() below to cut the whole
+    # window down to its listing date. I drop such stocks instead and say so.
+    first_valid = wide.apply(lambda col: col.first_valid_index())
+    late = first_valid[first_valid > wide.index[0] + pd.Timedelta(days=30)].index
+    if len(late) > 0:
+        print(f"Dropped for short history: {', '.join(late)}")
+        wide = wide.drop(columns=late)
+
+    wide = wide.ffill().dropna(how="any")  # align trading days, drop gaps
     log_price = np.log(wide)
     return log_price
 
@@ -68,14 +78,15 @@ def half_life_of_mean_reversion(spread: pd.Series) -> float:
     return -np.log(2) / theta
 
 
-def test_pair(log_price: pd.DataFrame, stock_a: str, stock_b: str) -> dict | None:
+def test_pair(log_price: pd.DataFrame, stock_a: str, stock_b: str,
+              min_obs: int = MIN_OBSERVATIONS) -> dict | None:
     """Run Engle-Granger in both regression directions and keep the more
     significant one. The test isn't symmetric (A on B gives different residuals
     than B on A), so one direction can pass while the other fails."""
     y = log_price[stock_a]
     x = log_price[stock_b]
 
-    if len(y) < MIN_OBSERVATIONS:
+    if len(y) < min_obs:
         return None
 
     # direction 1: A ~ B
