@@ -243,7 +243,7 @@ honest conclusion is that the model adds nothing.
 ## File structure
 
 ```
-taiwan-pairs-trading/
+pairs-trading-research/
 ├── README.md
 ├── requirements.txt
 ├── .gitignore
