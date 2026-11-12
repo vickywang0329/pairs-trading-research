@@ -1,6 +1,6 @@
-# Taiwan Semiconductor Pairs Trading / Statistical Arbitrage
+# Pairs Trading / Statistical Arbitrage: A Walk-Forward Study on Semiconductor Stocks
 
-I use the Engle-Granger cointegration test to pick pairs among Taiwan-listed semiconductor stocks,
+I use the Engle-Granger cointegration test to pick pairs among semiconductor-sector stocks (listed in Taiwan, see Universe below),
 train a gradient-boosted-tree model to predict whether a spread that has diverged will revert,
 and backtest the result out of sample under human-set risk rules. The backtest is compared against
 a baseline that uses the same rules without the model, to check whether the model adds anything.
@@ -14,7 +14,7 @@ test and compares the two approaches on realized performance.
 ## Status
 
 Phase 1 is finished and has been run end to end on real data (FinMind, 2018-11 to 2026-11). The short
-version of what it found: **a simple statistical-arbitrage strategy on Taiwan semiconductor stocks
+version of what it found: **a simple statistical-arbitrage strategy on semiconductor stocks
 does not show a reliable edge at retail trading costs.** Details and numbers are in [Results](#results).
 
 Prices are adjusted for dividends and splits. FinMind's price series is raw, and its ready-made adjusted
@@ -237,7 +237,7 @@ honest conclusion is that the model adds nothing.
 ## File structure
 
 ```
-taiwan-pairs-trading/
+pairs-trading-research/
 ├── README.md
 ├── requirements.txt
 ├── .gitignore
