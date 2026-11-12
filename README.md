@@ -1,6 +1,6 @@
-# Pairs Trading / Statistical Arbitrage: A Walk-Forward Study on Semiconductor Stocks
+# Taiwan Semiconductor Pairs Trading / Statistical Arbitrage
 
-I use the Engle-Granger cointegration test to pick pairs among semiconductor-sector stocks (listed in Taiwan, see Universe below),
+I use the Engle-Granger cointegration test to pick pairs among Taiwan-listed semiconductor stocks,
 train a gradient-boosted-tree model to predict whether a spread that has diverged will revert,
 and backtest the result out of sample under human-set risk rules. The backtest is compared against
 a baseline that uses the same rules without the model, to check whether the model adds anything.
@@ -14,7 +14,7 @@ test and compares the two approaches on realized performance.
 ## Status
 
 Phase 1 is finished and has been run end to end on real data (FinMind, 2018-11 to 2026-11). The short
-version of what it found: **a simple statistical-arbitrage strategy on semiconductor stocks
+version of what it found: **a simple statistical-arbitrage strategy on Taiwan semiconductor stocks
 does not show a reliable edge at retail trading costs.** Details and numbers are in [Results](#results).
 
 Prices are adjusted for dividends and splits. FinMind's price series is raw, and its ready-made adjusted
@@ -69,8 +69,13 @@ in `config.py`, so the same FinMind data gives the same results.
   Sino-American Silicon, Formosa Sumco), IC substrate (Unimicron, Nan Ya PCB, Kinsus), equipment and
   materials (Grand Process Technology, Gudeng Precision). Full list in `config.py`.
 - The first run on 14 of these stocks found only 1 pair that passed screening, too few to train a
-  model, so I widened the universe. With 31 stocks there are 465 pairs to test, so about 23 would
-  pass at p < 0.05 by chance alone. That's why the stability check and the out-of-sample test matter more than the p-value.
+  model, so I widened the universe. With 31 stocks there are 465 possible pairs. Each pair is tested in
+  both regression directions and the better p-value is kept, so between 5% and 10% of pairs pass at
+  p < 0.05 by chance alone, which is roughly 23 to 46 pairs. That's why the stability check and the
+  out-of-sample test matter more than the p-value.
+- Each screening run only uses stocks with a full price history in its window. Powerchip has a shorter
+  history, so the first 8 walk-forward periods test 30 stocks (435 pairs) and the other 19 test 31
+  stocks (465 pairs). The static 7-year screen also tests 30 stocks (435 pairs).
 - Benchmarks: 0050 (market proxy) and 00892 (semiconductor sector proxy). They are only used for
   relative-strength features and never enter a pair.
 - The window is fixed by `END_DATE` in `config.py` (not `date.today()`, so results are reproducible):
@@ -84,14 +89,15 @@ data (2025-11-13 to 2026-11-12), which no step used for selecting pairs, feature
 raw outputs are in [`results/`](results/).
 
 **1. A fixed pair list does not hold up.** On 3 years of data and 14 stocks, 1 pair passed screening.
-On 7 years and 31 stocks, 4 of 435 pairs passed the Engle-Granger test, which is fewer than the roughly
-22 expected by chance at 5%, and none passed the stability check (hedge-ratio coefficient of variation
+On 7 years, 4 of the 435 pairs (30 stocks, Powerchip dropped for short history) passed both the
+Engle-Granger p-value and the half-life screen. Chance alone would pass roughly 22 to 44 pairs on the
+p-value, so the screen found nothing beyond noise, and none passed the stability check (hedge-ratio coefficient of variation
 0.6 to 0.8 against a 0.30 limit). The one pair that looked fine on 3 years (Winbond / Nanya) did not
 survive the longer window.
 
 **2. Reselecting pairs every quarter finds pairs that do not last.** `walkforward.py` selected 10 pairs
 in nearly every period (the cap was almost always binding). Only 6.7% of the pairs selected in one quarter
-were selected again in the next (about 2% would be expected from random picks). Five early periods were
+were selected again in the next (about 2% would be expected from random picks, since 10 pairs are chosen out of 435 to 465). Five early periods were
 lost because the sector ETF used for features only has data from 2021-06.
 
 **3. The model has no predictive skill.** 1,025 training events and 228 out-of-sample events.
@@ -163,7 +169,7 @@ doesn't last. So every `REBALANCE_EVERY_DAYS` (63) I screen all pairs on the pre
 "spread" is two stocks moving opposite ways, which isn't a pairs trade), take the
 `MAX_PAIRS_PER_PERIOD` (10) most significant, and trade them with the hedge ratio fixed from that
 window until the next reselection. Formation uses only dates before the first trading day.
-The p-value cap matters: with 435 pairs, about 5% pass by luck in every period, so the screen alone
+The p-value cap matters: with 435 to 465 pairs, 5% to 10% pass by luck in every period (both directions are tested), so the screen alone
 proves nothing. What I check is whether the selected pairs then revert out of sample, and
 `walkforward.py` prints how often a pair selected in one quarter is selected again in the next.
 
@@ -237,7 +243,7 @@ honest conclusion is that the model adds nothing.
 ## File structure
 
 ```
-pairs-trading-research/
+taiwan-pairs-trading/
 ├── README.md
 ├── requirements.txt
 ├── .gitignore
