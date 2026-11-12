@@ -22,21 +22,40 @@ STOCK_UNIVERSE = {
     "2330": "TSMC",
     "2303": "UMC",
     "5347": "Vanguard International Semiconductor",
-    # IC design
+    "6770": "Powerchip Semiconductor Manufacturing",
+    # IC design and IP
     "2454": "MediaTek",
     "3034": "Novatek",
     "2379": "Realtek",
     "3661": "Alchip Technologies",
     "3035": "Faraday Technology",
+    "3443": "Global Unichip",
+    "6415": "Silergy",
+    "4966": "Parade Technologies",
+    "5269": "ASMedia Technology",
+    "8299": "Phison Electronics",
+    "3529": "eMemory Technology",
     # packaging and testing
     "3711": "ASE Technology Holding",
     "6239": "Powertech Technology",
     "2449": "King Yuan Electronics",
+    "6257": "Sigurd Microelectronics",
+    "2441": "Greatek Electronics",
     # memory
     "2408": "Nanya Technology",
     "2344": "Winbond Electronics",
+    "2337": "Macronix",
     # silicon wafer
     "6488": "GlobalWafers",
+    "5483": "Sino-American Silicon Products",
+    "3532": "Formosa Sumco Technology",
+    # IC substrate
+    "3037": "Unimicron",
+    "8046": "Nan Ya Printed Circuit Board",
+    "3189": "Kinsus Interconnect",
+    # equipment and materials
+    "3131": "Grand Process Technology",
+    "3680": "Gudeng Precision",
 }
 
 # ---------------------------------------------------------------------------
